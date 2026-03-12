@@ -2,26 +2,57 @@ const https = require("node:https");
 
 const BASE_URL = "https://sozluk.gov.tr/gts?ara=";
 const SUCCESS_CACHE_TTL = 12 * 60 * 60 * 1000;
-const FAILURE_CACHE_TTL = 5 * 60 * 1000;
+const FAILURE_CACHE_TTL = 60 * 1000;
+
+const DIACRITIC_REPLACEMENTS = {
+  â: "a",
+  î: "i",
+  û: "u",
+  ê: "e",
+  ô: "o",
+};
 
 const cache = new Map();
 
 function simplifyTurkishChars(word) {
   return (word ?? "")
     .toLocaleLowerCase("tr-TR")
-    .replace(/[âîû]/gu, (letter) => {
-      if (letter === "â") {
-        return "a";
-      }
-      if (letter === "î") {
-        return "i";
-      }
-      return "u";
-    });
+    .replace(/[âîûêô]/gu, (letter) => DIACRITIC_REPLACEMENTS[letter] ?? letter);
 }
 
 function removeHtmlTags(text) {
   return String(text ?? "").replace(/<[^>]*>/gu, "").trim();
+}
+
+function normalizeDictionaryWord(value) {
+  return simplifyTurkishChars(removeHtmlTags(value).normalize("NFC"));
+}
+
+function compactWord(value) {
+  return normalizeDictionaryWord(value).replace(/[^a-zçğıöşü]/gu, "");
+}
+
+function hasMatchingEntry(entries, targetWord) {
+  const normalizedTarget = normalizeDictionaryWord(targetWord);
+  const compactTarget = compactWord(targetWord);
+
+  return entries.some((entry) => {
+    const candidates = [entry?.madde_duz, entry?.madde];
+
+    return candidates.some((candidate) => {
+      const normalizedCandidate = normalizeDictionaryWord(candidate);
+      if (!normalizedCandidate) {
+        return false;
+      }
+
+      if (normalizedCandidate === normalizedTarget) {
+        return true;
+      }
+
+      const compactCandidate = compactWord(candidate);
+      return Boolean(compactCandidate) && compactCandidate === compactTarget;
+    });
+  });
 }
 
 function pruneCache() {
@@ -67,19 +98,19 @@ function fetchJson(url) {
 
         response.on("end", () => {
           if (response.statusCode < 200 || response.statusCode >= 300) {
-            reject(new Error(`TDK HTTP hatasi: ${response.statusCode}`));
+            reject(new Error(`TDK HTTP hatası: ${response.statusCode}`));
             return;
           }
 
           if (!body) {
-            resolve({ error: "Sonuc bulunamadi" });
+            resolve({ error: "Sonuç bulunamadı" });
             return;
           }
 
           try {
             resolve(JSON.parse(body));
           } catch (error) {
-            reject(new Error("TDK yaniti parse edilemedi"));
+            reject(new Error("TDK yanıtı ayrıştırılamadı"));
           }
         });
       }
@@ -87,7 +118,7 @@ function fetchJson(url) {
 
     request.on("error", reject);
     request.setTimeout(8000, () => {
-      request.destroy(new Error("TDK istegi zaman asimina ugradi"));
+      request.destroy(new Error("TDK isteği zaman aşımına uğradı"));
     });
   });
 }
@@ -110,10 +141,14 @@ async function validateWithTdk(word) {
   try {
     const data = await fetchJson(`${BASE_URL}${encodeURIComponent(word)}`);
 
-    if (!Array.isArray(data) || data.length === 0) {
+    if (
+      !Array.isArray(data) ||
+      data.length === 0 ||
+      data.every((entry) => entry?.error)
+    ) {
       const invalidResult = buildResult(
         false,
-        "Kelime TDK sozlugunde bulunamadi."
+        "Kelime TDK sözlüğünde bulunamadı."
       );
 
       cache.set(word, {
@@ -124,17 +159,11 @@ async function validateWithTdk(word) {
       return invalidResult;
     }
 
-    const normalizedTarget = simplifyTurkishChars(word);
-    const exactMatch = data.some((entry) => {
-      const candidate =
-        removeHtmlTags(entry?.madde_duz) || removeHtmlTags(entry?.madde);
-
-      return simplifyTurkishChars(candidate) === normalizedTarget;
-    });
+    const exactMatch = hasMatchingEntry(data, word);
 
     const validResult = exactMatch
       ? buildResult(true, null)
-      : buildResult(false, "Kelime TDK sozlugunde bulunamadi.");
+      : buildResult(false, "Kelime TDK sözlüğünde bulunamadı.");
 
     cache.set(word, {
       value: validResult,
@@ -146,7 +175,7 @@ async function validateWithTdk(word) {
   } catch (_error) {
     return buildResult(
       false,
-      "TDK dogrulamasi su anda yapilamiyor. Lutfen biraz sonra tekrar dene."
+      "TDK doğrulaması şu anda yapılamıyor. Lütfen biraz sonra tekrar dene."
     );
   }
 }

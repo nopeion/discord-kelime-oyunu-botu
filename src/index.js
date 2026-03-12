@@ -13,8 +13,30 @@ const { validateWithTdk } = require("./tdk");
 const { getExpectedLetter, parseWord } = require("./word-utils");
 
 const token = process.env.DISCORD_TOKEN;
+const DEFAULT_CONSECUTIVE_WORD_COOLDOWN_MS = 25_000;
+
+function resolveConsecutiveWordCooldownMs(rawValue) {
+  if (!rawValue) {
+    return DEFAULT_CONSECUTIVE_WORD_COOLDOWN_MS;
+  }
+
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    console.warn(
+      "CONSECUTIVE_WORD_COOLDOWN_MS geçersiz. Varsayılan 25000 ms kullanılacak."
+    );
+    return DEFAULT_CONSECUTIVE_WORD_COOLDOWN_MS;
+  }
+
+  return Math.floor(parsed);
+}
+
+const consecutiveWordCooldownMs = resolveConsecutiveWordCooldownMs(
+  process.env.CONSECUTIVE_WORD_COOLDOWN_MS
+);
+
 if (!token) {
-  console.error("DISCORD_TOKEN bulunamadi. .env dosyasini kontrol et.");
+  console.error("DISCORD_TOKEN bulunamadı. .env dosyasını kontrol et.");
   process.exit(1);
 }
 
@@ -49,7 +71,7 @@ function formatDuration(ms) {
 async function sendTemporaryInvalidEmbed(channel, reason) {
   const embed = createEmbed({
     type: "error",
-    title: "Gecersiz Kelime",
+    title: "Geçersiz Kelime",
     description: reason,
   });
 
@@ -67,21 +89,58 @@ async function rejectWordMessage(message, reason) {
   await sendTemporaryInvalidEmbed(message.channel, reason);
 }
 
+async function announceStartWord(channelId, startWord, expectedLetter) {
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+
+  if (!channel || !channel.isTextBased()) {
+    return false;
+  }
+
+  const sentMessage = await channel
+    .send({
+      embeds: [
+        createEmbed({
+          type: "info",
+          title: "Oyun Başladı",
+          description: `İlk kelime: \`${startWord}\``,
+          fields: [
+            {
+              name: "Beklenen Harf",
+              value: `\`${expectedLetter}\``,
+              inline: true,
+            },
+          ],
+        }),
+      ],
+    })
+    .catch(() => null);
+
+  return Boolean(sentMessage);
+}
+
 function mapAddWordErrorToReason(result) {
   if (result.reason === "WORD_ALREADY_USED") {
-    return "Bu kelime bu oyunda daha once kullanildi.";
+    return "Bu kelime bu oyunda daha önce kullanıldı.";
   }
 
   if (result.reason === "WRONG_FIRST_LETTER") {
-    return `Kelime \`${result.expectedLetter}\` harfi ile baslamali.`;
+    return `Kelime \`${result.expectedLetter}\` harfi ile başlamalı.`;
   }
 
   if (result.reason === "WRONG_CHANNEL") {
-    return `Oyun yalnizca <#${result.channelId}> kanalinda oynanabilir.`;
+    return `Oyun yalnızca <#${result.channelId}> kanalında oynanabilir.`;
+  }
+
+  if (result.reason === "SAME_USER_COOLDOWN") {
+    const remainingSeconds = Math.max(
+      1,
+      Math.ceil(Number(result.remainingMs ?? 0) / 1000)
+    );
+    return `Aynı kullanıcı tekrar yazmak için ${remainingSeconds} saniye beklemeli.`;
   }
 
   if (result.reason === "NO_ACTIVE_GAME") {
-    return "Su anda aktif bir oyun yok.";
+    return "Şu anda aktif bir oyun yok.";
   }
 
   return "Bu kelime kabul edilemedi.";
@@ -96,18 +155,18 @@ async function registerCommands() {
     if (guild) {
       await guild.commands.set(commands);
       console.log(
-        `Slash komutlar ${guild.name} sunucusuna yuklendi (${commands.length} adet).`
+        `Slash komutlar ${guild.name} sunucusuna yüklendi (${commands.length} adet).`
       );
       return;
     }
 
     console.warn(
-      "DEV_GUILD_ID bulundu ama sunucuya erisilemedi. Komutlar global olarak yuklenecek."
+      "DEV_GUILD_ID bulundu ama sunucuya erişilemedi. Komutlar global olarak yüklenecek."
     );
   }
 
   await client.application.commands.set(commands);
-  console.log(`Slash komutlar global olarak yuklendi (${commands.length} adet).`);
+  console.log(`Slash komutlar global olarak yüklendi (${commands.length} adet).`);
 }
 
 async function handleSetChannel(interaction) {
@@ -121,7 +180,7 @@ async function handleSetChannel(interaction) {
         createEmbed({
           type: "error",
           title: "Hata",
-          description: "Bu komut sadece bir sunucuda kullanilabilir.",
+          description: "Bu komut sadece bir sunucuda kullanılabilir.",
         }),
       ],
     });
@@ -137,7 +196,7 @@ async function handleSetChannel(interaction) {
           type: "warning",
           title: "Aktif Oyun Var",
           description:
-            "Kanal degistirmek icin once aktif oyunu bitirmelisin. Oyun kanalini oyun sirasinda degistirmiyorum.",
+            "Kanal değiştirmek için önce aktif oyunu bitirmelisin. Oyun kanalını oyun sırasında değiştirmiyorum.",
         }),
       ],
     });
@@ -151,8 +210,8 @@ async function handleSetChannel(interaction) {
     embeds: [
       createEmbed({
         type: "success",
-        title: "Kanal Ayarlandi",
-        description: `Kelime oyunu kanali <#${channel.id}> olarak kaydedildi.`,
+        title: "Kanal Ayarlandı",
+        description: `Kelime oyunu kanalı <#${channel.id}> olarak kaydedildi.`,
       }),
     ],
   });
@@ -168,7 +227,7 @@ async function handleStartGame(interaction) {
         createEmbed({
           type: "error",
           title: "Hata",
-          description: "Bu komut sadece bir sunucuda kullanilabilir.",
+          description: "Bu komut sadece bir sunucuda kullanılabilir.",
         }),
       ],
     });
@@ -183,8 +242,8 @@ async function handleStartGame(interaction) {
       embeds: [
         createEmbed({
           type: "warning",
-          title: "Kanal Ayari Gerekli",
-          description: "Once /kanal-ayarla komutu ile oyun kanalini secmelisin.",
+          title: "Kanal Ayarı Gerekli",
+          description: "Önce /kanal-ayarla komutu ile oyun kanalını seçmelisin.",
         }),
       ],
     });
@@ -197,7 +256,7 @@ async function handleStartGame(interaction) {
       embeds: [
         createEmbed({
           type: "error",
-          title: "Gecersiz Baslangic Kelimesi",
+          title: "Geçersiz Başlangıç Kelimesi",
           description: parsed.reason,
         }),
       ],
@@ -211,7 +270,7 @@ async function handleStartGame(interaction) {
       embeds: [
         createEmbed({
           type: "error",
-          title: "Baslangic Kelimesi Reddedildi",
+          title: "Başlangıç Kelimesi Reddedildi",
           description: tdkValidation.reason,
         }),
       ],
@@ -235,26 +294,39 @@ async function handleStartGame(interaction) {
           type: "warning",
           title: "Oyun Zaten Aktif",
           description:
-            "Bu sunucuda zaten aktif bir oyun var. Yeni oyun icin once /oyun-bitir kullan.",
+            "Bu sunucuda zaten aktif bir oyun var. Yeni oyun için önce /oyun-bitir kullan.",
         }),
       ],
     });
     return;
   }
 
+  const startWordAnnouncementSent = await announceStartWord(
+    settings.channel_id,
+    parsed.normalized,
+    expectedLetter
+  );
+
   await interaction.editReply({
     embeds: [
       createEmbed({
         type: "success",
-        title: "Oyun Basladi",
-        description: "Yeni kelime oyunu basariyla baslatildi.",
+        title: "Oyun Başladı",
+        description: "Yeni kelime oyunu başarıyla başlatıldı.",
         fields: [
           { name: "Kanal", value: `<#${settings.channel_id}>`, inline: true },
-          { name: "Ilk Kelime", value: `\`${parsed.normalized}\``, inline: true },
+          { name: "İlk Kelime", value: `\`${parsed.normalized}\``, inline: true },
           {
             name: "Beklenen Harf",
             value: `\`${expectedLetter}\``,
             inline: true,
+          },
+          {
+            name: "Kanal Duyurusu",
+            value: startWordAnnouncementSent
+              ? "Başlangıç kelimesi kanala gönderildi."
+              : "Başlangıç kelimesi kanala gönderilemedi. Bot izinlerini kontrol et.",
+            inline: false,
           },
         ],
       }),
@@ -272,7 +344,7 @@ async function handleEndGame(interaction) {
         createEmbed({
           type: "error",
           title: "Hata",
-          description: "Bu komut sadece bir sunucuda kullanilabilir.",
+          description: "Bu komut sadece bir sunucuda kullanılabilir.",
         }),
       ],
     });
@@ -291,7 +363,7 @@ async function handleEndGame(interaction) {
         createEmbed({
           type: "warning",
           title: "Aktif Oyun Yok",
-          description: "Bitirilecek aktif bir oyun bulunamadi.",
+          description: "Bitirilecek aktif bir oyun bulunamadı.",
         }),
       ],
     });
@@ -311,14 +383,14 @@ async function handleEndGame(interaction) {
         description: `Bu oyun **${summary.totalWords}** kelime ilerledi.`,
         fields: [
           { name: "Kanal", value: `<#${game.channel_id}>`, inline: true },
-          { name: "Sure", value: duration, inline: true },
+          { name: "Süre", value: duration, inline: true },
           {
-            name: "Oyuncu Sayisi",
+            name: "Oyuncu Sayısı",
             value: String(summary.uniquePlayers),
             inline: true,
           },
           {
-            name: "En Cok Kelime",
+            name: "En Çok Kelime",
             value: summary.topPlayerId
               ? `<@${summary.topPlayerId}> (${summary.topPlayerCount})`
               : "Veri yok",
@@ -340,7 +412,7 @@ async function handleStatus(interaction) {
         createEmbed({
           type: "error",
           title: "Hata",
-          description: "Bu komut sadece bir sunucuda kullanilabilir.",
+          description: "Bu komut sadece bir sunucuda kullanılabilir.",
         }),
       ],
     });
@@ -356,8 +428,8 @@ async function handleStatus(interaction) {
       embeds: [
         createEmbed({
           type: "warning",
-          title: "Kanal Ayari Yok",
-          description: "Heniz oyun kanali ayarlanmamis. /kanal-ayarla kullan.",
+          title: "Kanal Ayarı Yok",
+          description: "Henüz oyun kanalı ayarlanmamış. /kanal-ayarla kullan.",
         }),
       ],
     });
@@ -371,10 +443,10 @@ async function handleStatus(interaction) {
         createEmbed({
           type: "info",
           title: "Oyun Durumu",
-          description: "Su anda aktif oyun yok.",
+          description: "Şu anda aktif oyun yok.",
           fields: [
             {
-              name: "Ayarli Kanal",
+              name: "Ayarlı Kanal",
               value: `<#${settings.channel_id}>`,
               inline: true,
             },
@@ -405,12 +477,12 @@ async function handleStatus(interaction) {
             inline: true,
           },
           {
-            name: "Ilerleme",
+            name: "İlerleme",
             value: `${activeGame.total_words} kelime`,
             inline: true,
           },
           {
-            name: "Sure",
+            name: "Süre",
             value: formatDuration(Date.now() - activeGame.started_at),
             inline: true,
           },
@@ -430,7 +502,7 @@ async function handleStats(interaction) {
         createEmbed({
           type: "error",
           title: "Hata",
-          description: "Bu komut sadece bir sunucuda kullanilabilir.",
+          description: "Bu komut sadece bir sunucuda kullanılabilir.",
         }),
       ],
     });
@@ -445,8 +517,8 @@ async function handleStats(interaction) {
       embeds: [
         createEmbed({
           type: "info",
-          title: "Istatistik",
-          description: "Bu sunucuda henuz bitmis oyun bulunmuyor.",
+          title: "İstatistik",
+          description: "Bu sunucuda henüz bitmiş oyun bulunmuyor.",
         }),
       ],
     });
@@ -458,7 +530,7 @@ async function handleStats(interaction) {
     embeds: [
       createEmbed({
         type: "info",
-        title: "Genel Istatistikler",
+        title: "Genel İstatistikler",
         fields: [
           {
             name: "Toplam Oyun",
@@ -471,7 +543,7 @@ async function handleStats(interaction) {
             inline: true,
           },
           {
-            name: "Oyun Basina Ortalama",
+            name: "Oyun Başına Ortalama",
             value: stats.averageWords.toFixed(2),
             inline: true,
           },
@@ -488,7 +560,7 @@ async function handleStats(interaction) {
             inline: true,
           },
           {
-            name: "Tum Zamanlar Lideri",
+            name: "Tüm Zamanlar Lideri",
             value: stats.topContributor
               ? `<@${stats.topContributor.user_id}> (${stats.topContributor.word_count})`
               : "Veri yok",
@@ -501,12 +573,12 @@ async function handleStats(interaction) {
 }
 
 client.once(Events.ClientReady, async (readyClient) => {
-  console.log(`${readyClient.user.tag} olarak giris yapildi.`);
+  console.log(`${readyClient.user.tag} olarak giriş yapıldı.`);
 
   try {
     await registerCommands();
   } catch (error) {
-    console.error("Komutlar yuklenirken hata olustu:", error);
+    console.error("Komutlar yüklenirken hata oluştu:", error);
   }
 });
 
@@ -540,12 +612,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await handleStats(interaction);
     }
   } catch (error) {
-    console.error("Komut islenirken hata olustu:", error);
+    console.error("Komut işlenirken hata oluştu:", error);
 
     const errorEmbed = createEmbed({
       type: "error",
       title: "Beklenmeyen Hata",
-      description: "Bir seyler ters gitti. Lutfen tekrar dene.",
+      description: "Bir şeyler ters gitti. Lütfen tekrar dene.",
     });
 
     if (interaction.deferred || interaction.replied) {
@@ -574,7 +646,13 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  const parsed = parseWord(message.content);
+  const trimmedContent = message.content.trim();
+
+  if (trimmedContent.startsWith("-")) {
+    return;
+  }
+
+  const parsed = parseWord(trimmedContent);
   if (!parsed.ok) {
     await rejectWordMessage(message, parsed.reason);
     return;
@@ -585,7 +663,7 @@ client.on(Events.MessageCreate, async (message) => {
   if (firstLetter !== activeGame.expected_letter) {
     await rejectWordMessage(
       message,
-      `Kelime \`${activeGame.expected_letter}\` harfi ile baslamali.`
+      `Kelime \`${activeGame.expected_letter}\` harfi ile başlamalı.`
     );
     return;
   }
@@ -604,6 +682,7 @@ client.on(Events.MessageCreate, async (message) => {
     normalizedWord: parsed.normalized,
     expectedLetter: firstLetter,
     nextExpectedLetter,
+    cooldownMs: consecutiveWordCooldownMs,
   });
 
   if (!addResult.ok) {

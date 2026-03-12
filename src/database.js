@@ -125,6 +125,14 @@ function createDatabase(databasePath) {
       `SELECT COUNT(1) AS total FROM game_words WHERE game_id = ? AND normalized_word = ?`
     ),
 
+    getLastWordPlayerInGame: db.prepare(`
+      SELECT user_id, created_at
+      FROM game_words
+      WHERE game_id = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1
+    `),
+
     updateActiveGameState: db.prepare(`
       UPDATE games
       SET
@@ -263,8 +271,10 @@ function createDatabase(databasePath) {
       normalizedWord,
       expectedLetter,
       nextExpectedLetter,
+      cooldownMs,
     }) => {
       const activeGame = statements.getActiveGame.get(guildId);
+      const now = Date.now();
 
       if (!activeGame) {
         return { ok: false, reason: "NO_ACTIVE_GAME" };
@@ -286,6 +296,29 @@ function createDatabase(databasePath) {
         };
       }
 
+      const lastWordPlayer = statements.getLastWordPlayerInGame.get(activeGame.id);
+
+      const appliedCooldownMs = Number.isFinite(cooldownMs)
+        ? Math.max(0, Math.floor(cooldownMs))
+        : 0;
+
+      if (
+        appliedCooldownMs > 0 &&
+        lastWordPlayer &&
+        lastWordPlayer.user_id === userId
+      ) {
+        const lastCreatedAt = Number(lastWordPlayer.created_at ?? 0);
+        const elapsedMs = Math.max(0, now - lastCreatedAt);
+
+        if (elapsedMs < appliedCooldownMs) {
+          return {
+            ok: false,
+            reason: "SAME_USER_COOLDOWN",
+            remainingMs: appliedCooldownMs - elapsedMs,
+          };
+        }
+      }
+
       const alreadyUsed = statements.countWordInGame.get(
         activeGame.id,
         normalizedWord
@@ -304,7 +337,7 @@ function createDatabase(databasePath) {
         userId,
         word,
         normalizedWord,
-        createdAt: Date.now(),
+        createdAt: now,
       });
 
       statements.updateActiveGameState.run({

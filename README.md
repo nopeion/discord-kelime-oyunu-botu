@@ -1,51 +1,53 @@
 # Discord Kelime Botu
 
-Bu bot, Turkce kelime zinciri oyununu Discord sunucularinda oynatir.
+Bu bot, Türkçe kelime zinciri oyununu Discord sunucularında oynatır.
 
-## Ozellikler
+## Özellikler
 
-- TDK API ile kelime dogrulama (`sozluk.gov.tr`)
-- Sunucu bazli oyun kanali ayari
-- Slash komutlar ile oyun baslatma/bitirme/durum/istatistik
-- Gecersiz kelimede:
-  - kullanicinin mesaji silinir
-  - neden embed olarak gonderilir
+- TDK API ile kelime doğrulama (`sozluk.gov.tr`)
+- Sunucu bazlı oyun kanalı ayarı
+- Slash komutlar ile oyun başlatma/bitirme/durum/istatistik
+- Geçersiz kelimede:
+  - kullanıcının mesajı silinir
+  - neden embed olarak gönderilir
   - embed 10 saniye sonra silinir
-- Gecerli kelimede sadece `✅` reaksiyonu eklenir
-- Oyun ilerlemesi ve istatistikler SQLite veritabaninda tutulur
+- Geçerli kelimede sadece `✅` reaksiyonu eklenir
+- Oyun ilerlemesi ve istatistikler SQLite veritabanında tutulur
 - `ğ` ile biten kelimelerde sonraki harf `g` olarak kabul edilir
+- Aynı kullanıcı arka arkaya yazabilir ama bekleme süresi vardır (varsayılan 25 sn)
 
 ## Kurulum
 
-1. Bagimliliklari kur:
+1. Bağımlılıkları kur:
 
 ```bash
 npm install
 ```
 
-Node.js 18+ onerilir.
+Node.js 18+ önerilir.
 
-2. Ortam degiskenlerini ayarla:
+2. Ortam değişkenlerini ayarla:
 
 ```bash
 cp .env.example .env
 ```
 
-Windows PowerShell icin alternatif:
+Windows PowerShell için alternatif:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-`.env` icine bot token degerini yaz:
+`.env` içine bot token değerini yaz:
 
 ```env
 DISCORD_TOKEN=your_bot_token
 DEV_GUILD_ID=optional_guild_id_for_fast_command_updates
 DATABASE_PATH=./data/wordbot.sqlite
+CONSECUTIVE_WORD_COOLDOWN_MS=25000
 ```
 
-3. Botu baslat:
+3. Botu başlat:
 
 ```bash
 npm start
@@ -53,16 +55,16 @@ npm start
 
 ## Gerekli Discord Yetkileri
 
-Botun davetinde su yetkiler olmali:
+Botun davetinde şu yetkiler olmalı:
 
 - View Channels
 - Send Messages
 - Embed Links
 - Add Reactions
 - Read Message History
-- Manage Messages (gecersiz mesajlari silmek icin)
+- Manage Messages (geçersiz mesajları silmek için)
 
-Ayrica Developer Portal tarafinda **Message Content Intent** aktif olmali.
+Ayrıca Developer Portal tarafında **Message Content Intent** aktif olmalı.
 
 ## Komutlar
 
@@ -72,4 +74,4 @@ Ayrica Developer Portal tarafinda **Message Content Intent** aktif olmali.
 - `/oyun-durum`
 - `/istatistik`
 
-`/kanal-ayarla`, `/oyun-baslat` ve `/oyun-bitir` komutlari varsayilan olarak `Manage Server` yetkisi ister.
+`/kanal-ayarla`, `/oyun-baslat` ve `/oyun-bitir` komutları varsayılan olarak `Manage Server` yetkisi ister.

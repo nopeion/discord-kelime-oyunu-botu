@@ -4,6 +4,8 @@ const LETTER_REPLACEMENTS = {
   â: "a",
   î: "i",
   û: "u",
+  ê: "e",
+  ô: "o",
 };
 
 function normalizeWord(input) {
@@ -15,7 +17,7 @@ function normalizeWord(input) {
     .toLocaleLowerCase("tr-TR")
     .normalize("NFC")
     .trim()
-    .replace(/[âîû]/gu, (letter) => LETTER_REPLACEMENTS[letter] ?? letter);
+    .replace(/[âîûêô]/gu, (letter) => LETTER_REPLACEMENTS[letter] ?? letter);
 }
 
 function parseWord(input) {
@@ -24,14 +26,14 @@ function parseWord(input) {
   if (!rawValue) {
     return {
       ok: false,
-      reason: "Bos mesaj gecersiz. Lutfen tek bir kelime yaz.",
+      reason: "Boş mesaj geçersiz. Lütfen tek bir kelime yaz.",
     };
   }
 
   if (/\s/gu.test(rawValue)) {
     return {
       ok: false,
-      reason: "Mesaj sadece tek bir kelime olmali.",
+      reason: "Mesaj sadece tek bir kelime olmalı.",
     };
   }
 
@@ -40,7 +42,7 @@ function parseWord(input) {
   if (!VALID_WORD_REGEX.test(normalized)) {
     return {
       ok: false,
-      reason: "Sadece Turkce harflerden olusan bir kelime yazmalisin.",
+      reason: "Sadece Türkçe harflerden oluşan bir kelime yazmalısın.",
     };
   }
 

@@ -1,0 +1,38 @@
+name: Feature request
+description: Yeni özellik veya iyileştirme öner
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Fikirlerini payla. Ne kadar net olursa uygulaması o kadar hızlı olur.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Hangi problemi çözmek istiyorsun?
+      placeholder: Örn. Oyuncular cooldown süresini görmüyor.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Önerdiğin çözüm
+      placeholder: Örn. Cooldown bilgisini Discord relative timestamp ile gösterelim.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatif çözümler
+      description: Düşündüğün başka yaklaşım varsa yaz.
+
+  - type: textarea
+    id: extra_context
+    attributes:
+      label: Ek bağlam
+      description: Ekran görüntüsü, örnek kullanım, ek notlar.

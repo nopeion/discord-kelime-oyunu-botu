@@ -1,7 +1,7 @@
 {
-  "name": "discord-word-bot",
+  "name": "discord-kelime-oyunu-botu",
   "version": "1.0.0",
-  "description": "TDK dogrulamali Turkce kelime oyunu Discord botu",
+  "description": "TDK doğrulamalı Türkçe kelime oyunu Discord botu",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js"

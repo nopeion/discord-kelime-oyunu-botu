@@ -1,0 +1,62 @@
+name: Bug report
+description: Hatalı davranışları raporla
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Teşekkürler. Sorunu olabildiğince net yazarsan hızlı çözebiliriz.
+
+  - type: textarea
+    id: bug_description
+    attributes:
+      label: Sorun nedir?
+      description: Gözlemlediğin hatalı davranışı yaz.
+      placeholder: Örn. Aynı kullanıcı cooldown bitmeden yazabiliyor.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce_steps
+    attributes:
+      label: Tekrar üretme adımları
+      description: Adım adım nasıl oluştuğunu yaz.
+      placeholder: |
+        1. /oyun-baslat kelime:araba
+        2. Aynı kullanıcı ile tekrar kelime gönder
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Beklenen davranış
+      placeholder: Cooldown bitmeden kelime kabul edilmemeli.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: İlgili log / ekran görüntüsü
+      description: Mümkünse hata logu veya ekran görüntüsü ekle.
+
+  - type: input
+    id: environment
+    attributes:
+      label: Ortam bilgisi
+      description: Node.js sürümü, işletim sistemi vb.
+      placeholder: Node 20.x, Windows 11
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Kontrol listesi
+      options:
+        - label: Token ve benzeri gizli bilgileri paylaşmadım.
+          required: true
+        - label: Bu sorunun mevcut issue'larda olmadığını kontrol ettim.
+          required: true

@@ -132,11 +132,14 @@ function mapAddWordErrorToReason(result) {
   }
 
   if (result.reason === "SAME_USER_COOLDOWN") {
-    const remainingSeconds = Math.max(
-      1,
-      Math.ceil(Number(result.remainingMs ?? 0) / 1000)
-    );
-    return `Aynı kullanıcı tekrar yazmak için ${remainingSeconds} saniye beklemeli.`;
+    const remainingMs = Number(result.remainingMs ?? 0);
+
+    if (Number.isFinite(remainingMs) && remainingMs > 0) {
+      const availableAtUnix = Math.ceil((Date.now() + remainingMs) / 1000);
+      return `Aynı kullanıcı tekrar yazmak için <t:${availableAtUnix}:R> beklemeli.`;
+    }
+
+    return "Aynı kullanıcı tekrar yazmak için biraz beklemeli.";
   }
 
   if (result.reason === "NO_ACTIVE_GAME") {

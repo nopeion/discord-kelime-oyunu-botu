@@ -18,7 +18,11 @@ function createDatabase(databasePath) {
     CREATE TABLE IF NOT EXISTS guild_settings (
       guild_id TEXT PRIMARY KEY,
       channel_id TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
+      updated_at INTEGER NOT NULL,
+      auto_restart_enabled INTEGER NOT NULL DEFAULT 0,
+      auto_restart_hour INTEGER,
+      auto_restart_minute INTEGER,
+      last_auto_restart_date TEXT
     );
 
     CREATE TABLE IF NOT EXISTS games (
@@ -59,9 +63,45 @@ function createDatabase(databasePath) {
       ON game_words(game_id, normalized_word);
   `);
 
+  const guildSettingsColumns = new Set(
+    db
+      .prepare("PRAGMA table_info(guild_settings)")
+      .all()
+      .map((column) => column.name)
+  );
+
+  if (!guildSettingsColumns.has("auto_restart_enabled")) {
+    db.exec(
+      "ALTER TABLE guild_settings ADD COLUMN auto_restart_enabled INTEGER NOT NULL DEFAULT 0"
+    );
+  }
+
+  if (!guildSettingsColumns.has("auto_restart_hour")) {
+    db.exec("ALTER TABLE guild_settings ADD COLUMN auto_restart_hour INTEGER");
+  }
+
+  if (!guildSettingsColumns.has("auto_restart_minute")) {
+    db.exec("ALTER TABLE guild_settings ADD COLUMN auto_restart_minute INTEGER");
+  }
+
+  if (!guildSettingsColumns.has("last_auto_restart_date")) {
+    db.exec("ALTER TABLE guild_settings ADD COLUMN last_auto_restart_date TEXT");
+  }
+
   const statements = {
     getGuildSettings: db.prepare(
-      `SELECT guild_id, channel_id, updated_at FROM guild_settings WHERE guild_id = ?`
+      `
+      SELECT
+        guild_id,
+        channel_id,
+        updated_at,
+        auto_restart_enabled,
+        auto_restart_hour,
+        auto_restart_minute,
+        last_auto_restart_date
+      FROM guild_settings
+      WHERE guild_id = ?
+    `
     ),
 
     upsertGuildSettings: db.prepare(`
@@ -71,6 +111,67 @@ function createDatabase(databasePath) {
       DO UPDATE SET
         channel_id = excluded.channel_id,
         updated_at = excluded.updated_at
+    `),
+
+    upsertAutoRestartSettings: db.prepare(`
+      INSERT INTO guild_settings (
+        guild_id,
+        channel_id,
+        updated_at,
+        auto_restart_enabled,
+        auto_restart_hour,
+        auto_restart_minute,
+        last_auto_restart_date
+      )
+      VALUES (
+        @guildId,
+        @channelId,
+        @updatedAt,
+        1,
+        @hour,
+        @minute,
+        NULL
+      )
+      ON CONFLICT(guild_id)
+      DO UPDATE SET
+        channel_id = excluded.channel_id,
+        updated_at = excluded.updated_at,
+        auto_restart_enabled = 1,
+        auto_restart_hour = excluded.auto_restart_hour,
+        auto_restart_minute = excluded.auto_restart_minute
+    `),
+
+    disableAutoRestartSettings: db.prepare(`
+      UPDATE guild_settings
+      SET
+        updated_at = @updatedAt,
+        auto_restart_enabled = 0,
+        auto_restart_hour = NULL,
+        auto_restart_minute = NULL,
+        last_auto_restart_date = NULL
+      WHERE guild_id = @guildId
+    `),
+
+    listAutoRestartSchedules: db.prepare(`
+      SELECT
+        guild_id,
+        channel_id,
+        auto_restart_hour,
+        auto_restart_minute,
+        last_auto_restart_date
+      FROM guild_settings
+      WHERE
+        auto_restart_enabled = 1 AND
+        auto_restart_hour IS NOT NULL AND
+        auto_restart_minute IS NOT NULL
+    `),
+
+    markAutoRestartExecuted: db.prepare(`
+      UPDATE guild_settings
+      SET
+        last_auto_restart_date = @dateKey,
+        updated_at = @updatedAt
+      WHERE guild_id = @guildId
     `),
 
     getActiveGame: db.prepare(
@@ -215,6 +316,35 @@ function createDatabase(databasePath) {
 
   function getActiveGame(guildId) {
     return statements.getActiveGame.get(guildId) || null;
+  }
+
+  function setGuildAutoRestartTime({ guildId, channelId, hour, minute }) {
+    statements.upsertAutoRestartSettings.run({
+      guildId,
+      channelId,
+      hour,
+      minute,
+      updatedAt: Date.now(),
+    });
+  }
+
+  function disableGuildAutoRestart(guildId) {
+    statements.disableAutoRestartSettings.run({
+      guildId,
+      updatedAt: Date.now(),
+    });
+  }
+
+  function getAutoRestartSchedules() {
+    return statements.listAutoRestartSchedules.all();
+  }
+
+  function markAutoRestartExecuted(guildId, dateKey) {
+    statements.markAutoRestartExecuted.run({
+      guildId,
+      dateKey,
+      updatedAt: Date.now(),
+    });
   }
 
   const startGameTx = db.transaction(
@@ -421,9 +551,13 @@ function createDatabase(databasePath) {
     addWordToActiveGame,
     endActiveGame,
     getActiveGame,
+    getAutoRestartSchedules,
     getGuildSettings,
     getGuildStats,
+    markAutoRestartExecuted,
+    disableGuildAutoRestart,
     setGuildChannel,
+    setGuildAutoRestartTime,
     startGame,
   };
 }

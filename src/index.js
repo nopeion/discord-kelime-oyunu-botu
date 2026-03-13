@@ -9,11 +9,14 @@ const {
 const { getCommandData } = require("./commands");
 const { createDatabase } = require("./database");
 const { createEmbed } = require("./embeds");
+const { getShuffledStartWords } = require("./random-words");
 const { validateWithTdk } = require("./tdk");
-const { getExpectedLetter, parseWord } = require("./word-utils");
+const { getExpectedLetter, normalizeWord, parseWord } = require("./word-utils");
 
 const token = process.env.DISCORD_TOKEN;
 const DEFAULT_CONSECUTIVE_WORD_COOLDOWN_MS = 25_000;
+const SCHEDULER_CHECK_INTERVAL_MS = 30_000;
+const DEFAULT_GAME_TIMEZONE = "Europe/Istanbul";
 
 function resolveConsecutiveWordCooldownMs(rawValue) {
   if (!rawValue) {
@@ -34,6 +37,7 @@ function resolveConsecutiveWordCooldownMs(rawValue) {
 const consecutiveWordCooldownMs = resolveConsecutiveWordCooldownMs(
   process.env.CONSECUTIVE_WORD_COOLDOWN_MS
 );
+const schedulerTimeZone = process.env.GAME_TIMEZONE || DEFAULT_GAME_TIMEZONE;
 
 if (!token) {
   console.error("DISCORD_TOKEN bulunamadı. .env dosyasını kontrol et.");
@@ -49,6 +53,8 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
 });
+
+let isAutoRestartRunning = false;
 
 function formatDuration(ms) {
   const totalSeconds = Math.floor(ms / 1000);
@@ -66,6 +72,74 @@ function formatDuration(ms) {
   }
 
   return `${seconds}sn`;
+}
+
+function getTimePartsInZone(date, timeZone) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+
+  const parts = formatter.formatToParts(date);
+  const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return {
+    dateKey: `${map.year}-${map.month}-${map.day}`,
+    hour: Number(map.hour),
+    minute: Number(map.minute),
+  };
+}
+
+async function findRandomValidStartWord() {
+  const candidates = getShuffledStartWords();
+
+  for (const candidate of candidates) {
+    const normalized = normalizeWord(candidate);
+    const validation = await validateWithTdk(normalized);
+
+    if (validation.valid) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+function getStartChannelFromInteraction(interaction, settings) {
+  const commandChannelId = interaction.channelId;
+
+  if (!commandChannelId) {
+    return {
+      ok: false,
+      reason: "Komut kanalı algılanamadı.",
+    };
+  }
+
+  if (!settings) {
+    return {
+      ok: true,
+      channelId: commandChannelId,
+      autoAssigned: true,
+    };
+  }
+
+  if (settings.channel_id !== commandChannelId) {
+    return {
+      ok: false,
+      reason: `Bu komut yalnızca ayarlı oyun kanalında kullanılabilir: <#${settings.channel_id}>`,
+    };
+  }
+
+  return {
+    ok: true,
+    channelId: settings.channel_id,
+    autoAssigned: false,
+  };
 }
 
 async function sendTemporaryInvalidEmbed(channel, reason) {
@@ -116,6 +190,42 @@ async function announceStartWord(channelId, startWord, expectedLetter) {
     .catch(() => null);
 
   return Boolean(sentMessage);
+}
+
+async function startNewGameWithRandomWord({ guildId, channelId, startedBy }) {
+  const startWord = await findRandomValidStartWord();
+  if (!startWord) {
+    return {
+      ok: false,
+      reason: "RANDOM_START_WORD_NOT_FOUND",
+    };
+  }
+
+  const expectedLetter = getExpectedLetter(startWord);
+  const result = db.startGame({
+    guildId,
+    channelId,
+    startWord,
+    expectedLetter,
+    startedBy,
+  });
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const startWordAnnouncementSent = await announceStartWord(
+    channelId,
+    startWord,
+    expectedLetter
+  );
+
+  return {
+    ok: true,
+    startWord,
+    expectedLetter,
+    startWordAnnouncementSent,
+  };
 }
 
 function mapAddWordErrorToReason(result) {
@@ -240,57 +350,45 @@ async function handleStartGame(interaction) {
   await interaction.deferReply({ ephemeral: true });
 
   const settings = db.getGuildSettings(guildId);
-  if (!settings) {
+  const channelResolution = getStartChannelFromInteraction(interaction, settings);
+  if (!channelResolution.ok) {
     await interaction.editReply({
       embeds: [
         createEmbed({
           type: "warning",
-          title: "Kanal Ayarı Gerekli",
-          description: "Önce /kanal-ayarla komutu ile oyun kanalını seçmelisin.",
+          title: "Yanlış Kanal",
+          description: channelResolution.reason,
         }),
       ],
     });
     return;
   }
 
-  const parsed = parseWord(interaction.options.getString("kelime", true));
-  if (!parsed.ok) {
-    await interaction.editReply({
-      embeds: [
-        createEmbed({
-          type: "error",
-          title: "Geçersiz Başlangıç Kelimesi",
-          description: parsed.reason,
-        }),
-      ],
-    });
-    return;
+  if (channelResolution.autoAssigned) {
+    db.setGuildChannel(guildId, channelResolution.channelId);
   }
 
-  const tdkValidation = await validateWithTdk(parsed.normalized);
-  if (!tdkValidation.valid) {
-    await interaction.editReply({
-      embeds: [
-        createEmbed({
-          type: "error",
-          title: "Başlangıç Kelimesi Reddedildi",
-          description: tdkValidation.reason,
-        }),
-      ],
-    });
-    return;
-  }
-
-  const expectedLetter = getExpectedLetter(parsed.normalized);
-  const result = db.startGame({
+  const randomStart = await startNewGameWithRandomWord({
     guildId,
-    channelId: settings.channel_id,
-    startWord: parsed.normalized,
-    expectedLetter,
+    channelId: channelResolution.channelId,
     startedBy: interaction.user.id,
   });
 
-  if (!result.ok) {
+  if (!randomStart.ok && randomStart.reason === "RANDOM_START_WORD_NOT_FOUND") {
+    await interaction.editReply({
+      embeds: [
+        createEmbed({
+          type: "error",
+          title: "Başlangıç Kelimesi Bulunamadı",
+          description:
+            "Rastgele başlangıç kelimesi seçilemedi. Lütfen biraz sonra tekrar dene.",
+        }),
+      ],
+    });
+    return;
+  }
+
+  if (!randomStart.ok) {
     await interaction.editReply({
       embeds: [
         createEmbed({
@@ -304,29 +402,33 @@ async function handleStartGame(interaction) {
     return;
   }
 
-  const startWordAnnouncementSent = await announceStartWord(
-    settings.channel_id,
-    parsed.normalized,
-    expectedLetter
-  );
-
   await interaction.editReply({
     embeds: [
       createEmbed({
         type: "success",
         title: "Oyun Başladı",
-        description: "Yeni kelime oyunu başarıyla başlatıldı.",
+        description: channelResolution.autoAssigned
+          ? "Yeni kelime oyunu başarıyla başlatıldı. Bu kanal oyun kanalı olarak otomatik ayarlandı."
+          : "Yeni kelime oyunu başarıyla başlatıldı.",
         fields: [
-          { name: "Kanal", value: `<#${settings.channel_id}>`, inline: true },
-          { name: "İlk Kelime", value: `\`${parsed.normalized}\``, inline: true },
+          {
+            name: "Kanal",
+            value: `<#${channelResolution.channelId}>`,
+            inline: true,
+          },
+          {
+            name: "İlk Kelime",
+            value: `\`${randomStart.startWord}\``,
+            inline: true,
+          },
           {
             name: "Beklenen Harf",
-            value: `\`${expectedLetter}\``,
+            value: `\`${randomStart.expectedLetter}\``,
             inline: true,
           },
           {
             name: "Kanal Duyurusu",
-            value: startWordAnnouncementSent
+            value: randomStart.startWordAnnouncementSent
               ? "Başlangıç kelimesi kanala gönderildi."
               : "Başlangıç kelimesi kanala gönderilemedi. Bot izinlerini kontrol et.",
             inline: false,
@@ -575,6 +677,184 @@ async function handleStats(interaction) {
   });
 }
 
+async function handleScheduleGame(interaction) {
+  const guildId = interaction.guildId;
+
+  if (!guildId) {
+    await interaction.reply({
+      ephemeral: true,
+      embeds: [
+        createEmbed({
+          type: "error",
+          title: "Hata",
+          description: "Bu komut sadece bir sunucuda kullanılabilir.",
+        }),
+      ],
+    });
+    return;
+  }
+
+  const hour = interaction.options.getInteger("saat", true);
+  const minute = interaction.options.getInteger("dakika", true);
+  const settings = db.getGuildSettings(guildId);
+  const channelId = settings?.channel_id || interaction.channelId;
+
+  if (!channelId) {
+    await interaction.reply({
+      ephemeral: true,
+      embeds: [
+        createEmbed({
+          type: "error",
+          title: "Kanal Bulunamadı",
+          description: "Oyun kanalı algılanamadı. Lütfen tekrar dene.",
+        }),
+      ],
+    });
+    return;
+  }
+
+  db.setGuildAutoRestartTime({
+    guildId,
+    channelId,
+    hour,
+    minute,
+  });
+
+  const formattedHour = String(hour).padStart(2, "0");
+  const formattedMinute = String(minute).padStart(2, "0");
+
+  await interaction.reply({
+    ephemeral: true,
+    embeds: [
+      createEmbed({
+        type: "success",
+        title: "Oyun Zamanlandı",
+        description:
+          `Her gün ${formattedHour}:${formattedMinute} saatinde aktif oyun bitirilip ` +
+          "rastgele bir başlangıç kelimesi ile otomatik yeni oyun başlatılacak.",
+        fields: [
+          {
+            name: "Kanal",
+            value: `<#${channelId}>`,
+            inline: true,
+          },
+          {
+            name: "Saat Dilimi",
+            value: schedulerTimeZone,
+            inline: true,
+          },
+        ],
+      }),
+    ],
+  });
+}
+
+async function handleDisableScheduleGame(interaction) {
+  const guildId = interaction.guildId;
+
+  if (!guildId) {
+    await interaction.reply({
+      ephemeral: true,
+      embeds: [
+        createEmbed({
+          type: "error",
+          title: "Hata",
+          description: "Bu komut sadece bir sunucuda kullanılabilir.",
+        }),
+      ],
+    });
+    return;
+  }
+
+  db.disableGuildAutoRestart(guildId);
+
+  await interaction.reply({
+    ephemeral: true,
+    embeds: [
+      createEmbed({
+        type: "info",
+        title: "Otomatik Yenileme Kapatıldı",
+        description: "Zamanlanmış oyun yenileme kapatıldı.",
+      }),
+    ],
+  });
+}
+
+async function runAutoRestartForSchedule(schedule, dateKey) {
+  const guildId = schedule.guild_id;
+  const channelId = schedule.channel_id;
+
+  const activeGame = db.getActiveGame(guildId);
+  if (activeGame) {
+    db.endActiveGame({
+      guildId,
+      endedBy: "auto-scheduler",
+    });
+  }
+
+  const autoStarted = await startNewGameWithRandomWord({
+    guildId,
+    channelId,
+    startedBy: "auto-scheduler",
+  });
+
+  if (!autoStarted.ok) {
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (channel && channel.isTextBased()) {
+      await channel
+        .send({
+          embeds: [
+            createEmbed({
+              type: "error",
+              title: "Otomatik Oyun Başlatılamadı",
+              description:
+                "Zamanlanan oyun yenilemesi sırasında yeni başlangıç kelimesi seçilemedi.",
+            }),
+          ],
+        })
+        .catch(() => null);
+    }
+  }
+
+  db.markAutoRestartExecuted(guildId, dateKey);
+}
+
+async function processAutoRestarts() {
+  if (isAutoRestartRunning) {
+    return;
+  }
+
+  isAutoRestartRunning = true;
+
+  try {
+    const schedules = db.getAutoRestartSchedules();
+    if (schedules.length === 0) {
+      return;
+    }
+
+    const now = getTimePartsInZone(new Date(), schedulerTimeZone);
+
+    for (const schedule of schedules) {
+      const hour = Number(schedule.auto_restart_hour);
+      const minute = Number(schedule.auto_restart_minute);
+
+      if (hour !== now.hour || minute !== now.minute) {
+        continue;
+      }
+
+      if (schedule.last_auto_restart_date === now.dateKey) {
+        continue;
+      }
+
+      await runAutoRestartForSchedule(schedule, now.dateKey);
+    }
+  } catch (error) {
+    console.error("Otomatik oyun zamanlayıcısında hata oluştu:", error);
+  } finally {
+    isAutoRestartRunning = false;
+  }
+}
+
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`${readyClient.user.tag} olarak giriş yapıldı.`);
 
@@ -583,6 +863,15 @@ client.once(Events.ClientReady, async (readyClient) => {
   } catch (error) {
     console.error("Komutlar yüklenirken hata oluştu:", error);
   }
+
+  processAutoRestarts().catch(() => null);
+  setInterval(() => {
+    processAutoRestarts().catch(() => null);
+  }, SCHEDULER_CHECK_INTERVAL_MS);
+
+  console.log(
+    `Otomatik oyun zamanlayıcısı aktif. Saat dilimi: ${schedulerTimeZone}`
+  );
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -613,6 +902,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.commandName === "istatistik") {
       await handleStats(interaction);
+      return;
+    }
+
+    if (interaction.commandName === "oyun-zamanla") {
+      await handleScheduleGame(interaction);
+      return;
+    }
+
+    if (interaction.commandName === "oyun-zamanla-kapat") {
+      await handleDisableScheduleGame(interaction);
     }
   } catch (error) {
     console.error("Komut işlenirken hata oluştu:", error);

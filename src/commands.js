@@ -22,13 +22,7 @@ const commandBuilders = [
   new SlashCommandBuilder()
     .setName("oyun-baslat")
     .setDescription("Yeni bir kelime oyunu başlatır.")
-    .setDefaultMemberPermissions(managementPermission)
-    .addStringOption((option) =>
-      option
-        .setName("kelime")
-        .setDescription("Oyunu başlatacak ilk kelime")
-        .setRequired(true)
-    ),
+    .setDefaultMemberPermissions(managementPermission),
 
   new SlashCommandBuilder()
     .setName("oyun-bitir")
@@ -42,6 +36,32 @@ const commandBuilders = [
   new SlashCommandBuilder()
     .setName("istatistik")
     .setDescription("Sunucunun genel kelime oyunu istatistiklerini gösterir."),
+
+  new SlashCommandBuilder()
+    .setName("oyun-zamanla")
+    .setDescription("Her gün belirli saatte oyunu otomatik yeniler.")
+    .setDefaultMemberPermissions(managementPermission)
+    .addIntegerOption((option) =>
+      option
+        .setName("saat")
+        .setDescription("0-23 arası saat")
+        .setMinValue(0)
+        .setMaxValue(23)
+        .setRequired(true)
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName("dakika")
+        .setDescription("0-59 arası dakika")
+        .setMinValue(0)
+        .setMaxValue(59)
+        .setRequired(true)
+    ),
+
+  new SlashCommandBuilder()
+    .setName("oyun-zamanla-kapat")
+    .setDescription("Otomatik oyun yenilemeyi kapatır.")
+    .setDefaultMemberPermissions(managementPermission),
 ];
 
 function getCommandData() {

@@ -7,8 +7,10 @@ Discord sunucuları için geliştirilmiş, TDK doğrulamalı Türkçe kelime zin
 - TDK API (`sozluk.gov.tr`) ile kelime doğrulama
 - Sunucu bazlı oyun kanalı seçimi
 - Slash komutlar ile başlatma, bitirme, durum ve istatistik takibi
+- `/oyun-baslat` komutunda başlangıç kelimesini rastgele seçme
 - Oyun başında ilk kelimeyi oyun kanalına görünür şekilde duyurma
 - Aynı kullanıcı için art arda yazma bekleme süresi (varsayılan 25 sn, ayarlanabilir)
+- Günlük saatli otomatik oyun yenileme (`/oyun-zamanla`)
 - `-` ile başlayan sohbet mesajlarını oyundan bağımsız bırakma
 - Geçersiz kelimede mesaj silme + nedenini embed olarak gösterme
 - Oyun verilerini SQLite üzerinde kalıcı tutma
@@ -46,12 +48,14 @@ DISCORD_TOKEN=your_bot_token
 DEV_GUILD_ID=optional_guild_id_for_fast_command_updates
 DATABASE_PATH=./data/wordbot.sqlite
 CONSECUTIVE_WORD_COOLDOWN_MS=25000
+GAME_TIMEZONE=Europe/Istanbul
 ```
 
 - `DISCORD_TOKEN`: Bot token değeri (zorunlu)
 - `DEV_GUILD_ID`: Komutların hızlı güncellenmesi için geliştirme sunucusu (opsiyonel)
 - `DATABASE_PATH`: SQLite dosya yolu (opsiyonel)
 - `CONSECUTIVE_WORD_COOLDOWN_MS`: Aynı kullanıcının tekrar yazma bekleme süresi (ms)
+- `GAME_TIMEZONE`: Zamanlanmış oyun yenileme saat dilimi
 
 ## Gerekli Discord Yetkileri
 
@@ -67,10 +71,12 @@ Discord Developer Portal tarafında **Message Content Intent** aktif olmalıdır
 ## Komutlar
 
 - `/kanal-ayarla kanal:<#kanal>`
-- `/oyun-baslat kelime:<kelime>`
+- `/oyun-baslat`
 - `/oyun-bitir`
 - `/oyun-durum`
 - `/istatistik`
+- `/oyun-zamanla saat:<0-23> dakika:<0-59>`
+- `/oyun-zamanla-kapat`
 
 `/kanal-ayarla`, `/oyun-baslat` ve `/oyun-bitir` komutları varsayılan olarak `Manage Channels` yetkisi ister.
 

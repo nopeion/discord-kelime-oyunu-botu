@@ -72,7 +72,7 @@ Discord Developer Portal tarafında **Message Content Intent** aktif olmalıdır
 - `/oyun-durum`
 - `/istatistik`
 
-`/kanal-ayarla`, `/oyun-baslat` ve `/oyun-bitir` komutları varsayılan olarak `Manage Server` yetkisi ister.
+`/kanal-ayarla`, `/oyun-baslat` ve `/oyun-bitir` komutları varsayılan olarak `Manage Channels` yetkisi ister.
 
 ## Oyun Kuralları
 

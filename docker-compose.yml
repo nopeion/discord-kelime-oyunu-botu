@@ -1,0 +1,10 @@
+services:
+  discord-word-bot:
+    build: .
+    container_name: discord-word-bot
+    restart: unless-stopped
+    mem_limit: 96m
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
